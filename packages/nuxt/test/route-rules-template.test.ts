@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url'
 import { normalize } from 'pathe'
 import { withoutTrailingSlash } from 'ufo'
 import { describe, expect, it } from 'vitest'
+import type { Nuxt } from '@nuxt/schema'
 import { loadNuxt } from '../src/index.ts'
 import { routeRulesTemplate } from '../src/core/templates.ts'
 import type { NuxtPage } from '../schema.ts'
@@ -77,6 +78,69 @@ describe('route rules template', () => {
     const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
     expect(matcher('/admin/users')).toEqual({ appMiddleware: { auth: true, admin: true }, ssr: false })
     expect(matcher('/lower/page')).toEqual({ ssr: false })
+  })
+
+  it('applies `appMiddleware` from rules with regex constraints', async () => {
+    const contents = await getRouteRulesTemplate(false, undefined, {
+      '/blog/:slug(caf%C3%A9)': { appMiddleware: 'auth' },
+      '/unencoded/:slug(café)': { appMiddleware: 'auth' },
+      '/x/:id(\\D+)': { appMiddleware: 'admin' },
+      '/Range/:id([A-z]+)': { appMiddleware: 'auth' },
+    })
+    const code = contents
+      .replace(/^import \{ defu \} from .*$/m, '')
+      .replace(/^import routerOptions from .*$/m, 'const routerOptions = {}')
+      .replace('export default', 'return')
+    const { defu } = await import('defu')
+    const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
+    expect(matcher('/blog/café').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/Blog/caf%C3%A9').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/unencoded/café').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/x/abc').appMiddleware).toEqual({ admin: true })
+    expect(matcher('/x/123')).not.toHaveProperty('appMiddleware')
+    expect(matcher('/range/ABC').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/RANGE/_').appMiddleware).toEqual({ auth: true })
+  })
+
+  it('rejects regex constraints that depend on letter case', async () => {
+    await expect(getRouteRulesTemplate(false, undefined, { '/upper/:id([A-Z]+)': { appMiddleware: 'auth' } })).rejects.toThrow('depends on letter case (`[A-Z]`)')
+    await expect(getRouteRulesTemplate(true, undefined, { '/upper/:id([A-Z]+)': { appMiddleware: 'auth' } })).resolves.toBeTypeOf('string')
+    await expect(getRouteRulesTemplate(false, undefined, { '/accent/:id([é]+)': { appMiddleware: 'auth' } })).resolves.toBeTypeOf('string')
+  })
+
+  it('throws at runtime when router options disable `sensitive` and a constraint depends on letter case', async () => {
+    const { defu } = await import('defu')
+    const load = (contents: string, sensitive: boolean) => new Function('defu', contents
+      .replace(/^import \{ defu \} from .*$/m, '')
+      .replace(/^import routerOptions from .*$/m, `const routerOptions = { sensitive: ${sensitive} }`)
+      .replace('export default', 'return'))(defu) as (path: string) => Record<string, any>
+
+    const caseDependent = await getRouteRulesTemplate(true, undefined, { '/upper/:id([A-Z]+)': { appMiddleware: 'auth' } })
+    expect(() => load(caseDependent, false)).toThrow('`/upper/:id([A-Z]+)` has a regex constraint that depends on letter case (`[A-Z]`)')
+    expect(load(caseDependent, true)('/upper/ABC').appMiddleware).toEqual({ auth: true })
+
+    const caseIndependent = await getRouteRulesTemplate(true, undefined, { '/upper/:id([a-z]+)': { appMiddleware: 'auth' } })
+    expect(caseIndependent).not.toContain('throw new Error')
+    expect(load(caseIndependent, false)('/Upper/ABC').appMiddleware).toEqual({ auth: true })
+  })
+
+  it('applies `appMiddleware` from rules with unencoded regex constraints read from the config', async () => {
+    const nuxt = {
+      options: {
+        app: { baseURL: '/' },
+        router: { options: {} },
+        routeRules: { '/blog/:slug(café)': { appMiddleware: 'auth' } },
+      },
+    } as unknown as Nuxt
+    const contents = await routeRulesTemplate.getContents!({ nuxt, app: undefined!, options: routeRulesTemplate.options! })
+    const code = contents
+      .replace(/^import \{ defu \} from .*$/m, '')
+      .replace(/^import routerOptions from .*$/m, 'const routerOptions = {}')
+      .replace('export default', 'return')
+    const { defu } = await import('defu')
+    const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
+    expect(matcher('/blog/café').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/blog/caf%C3%A9').appMiddleware).toEqual({ auth: true })
   })
 })
 

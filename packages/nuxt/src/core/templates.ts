@@ -9,12 +9,12 @@ import { hash } from 'ohash'
 import { camelCase } from 'scule'
 import { filename, reverseResolveAlias } from 'pathe/utils'
 import { tryUseNitro } from '@nuxt/kit'
-import { bundlerDiagnostics, useServerBuild } from '@nuxt/kit/internal'
+import { bundlerDiagnostics, pageDiagnostics, useServerBuild } from '@nuxt/kit/internal'
 
 import { annotatePlugins, checkForCircularDependencies, filterPluginDependencies, hasIslandOptOutPlugins, hasParallelPlugins, hasPluginDependencies, hasPluginHooks, sortPluginsByDependsOn } from './app.ts'
 import { setPluginDependenciesForMode } from './plugins/plugin-metadata.ts'
 import { EXTENSION_RE } from './utils/index.ts'
-import { createNormalizedRouteRulesRouter, normalizePathCode, resolveRouteRulesRoutes } from './utils/route-rules.ts'
+import { createNormalizedRouteRulesRouter, findCaseDependentRouteRuleKeyPart, normalizePathCode, resolveRouteRulesRoutes } from './utils/route-rules.ts'
 import type { RouteRulesRouter } from './utils/route-rules.ts'
 import type { Nuxt, NuxtApp, NuxtOptions, NuxtTemplate } from 'nuxt/schema'
 import type { Nitro } from 'nitro/types'
@@ -823,6 +823,12 @@ export const routeRulesTemplate: NuxtTemplate = {
     // `app/router.options.ts` (runtime-only), so emit both a decoded and a decoded+folded
     // matcher and pick at runtime.
     const caseSensitiveRouteRules = !!nuxt.options.router.options.sensitive
+    const caseDependent = routes
+      .map(({ route }) => ({ route, part: findCaseDependentRouteRuleKeyPart(route) }))
+      .find((entry): entry is { route: string, part: string } => entry.part !== undefined)
+    if (caseDependent && !caseSensitiveRouteRules) {
+      throw pageDiagnostics.NUXT_B4022(caseDependent)
+    }
     const warned = warnedKeyCollisions.get(nuxt) ?? warnedKeyCollisions.set(nuxt, new Set()).get(nuxt)!
     const getNormalizedRouter = (fold: boolean) => createNormalizedRouteRulesRouter(routes, '', fold, (existing, route, key) => {
       // Only the matcher that will actually be used at runtime should report collisions.
@@ -867,6 +873,7 @@ export const routeRulesTemplate: NuxtTemplate = {
     return [
       `import { defu } from ${JSON.stringify(defuPath)}`,
       needsRouterOptions ? `import routerOptions from '#build/router.options.mjs'` : ``,
+      caseDependent ? `if (!routerOptions.sensitive) { throw new Error(${JSON.stringify(`[nuxt] The route rule \`${caseDependent.route}\` has a regex constraint that depends on letter case (\`${caseDependent.part}\`), so it cannot be matched with \`router.options.sensitive: false\`. Write the constraint for lower-case letters, such as \`[a-z]\` instead of \`[A-Z]\`.`)}) }` : ``,
       needsRouterOptions ? `const sensitiveMatcher = ${sensitiveMatcher}` : ``,
       needsRouterOptions
         ? (foldedMatcher === sensitiveMatcher ? `const foldedMatcher = sensitiveMatcher` : `const foldedMatcher = ${foldedMatcher}`)
