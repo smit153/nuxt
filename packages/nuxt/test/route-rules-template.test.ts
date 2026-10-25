@@ -41,6 +41,17 @@ describe('route rules template', () => {
     }
   })
 
+  it('emits a constant when only a catch-all rule applies', async () => {
+    expect(await getRouteRulesTemplate(false, undefined, {})).toBe('export default () => ({ssr: true})')
+    expect(await getRouteRulesTemplate(false, undefined, { '/**': { appLayout: 'a' }, 'GET /**': { appLayout: 'b' }, 'POST /admin/**': { ssr: false } }))
+      .toBe('export default () => ({ssr: true,appLayout: "b"})')
+  })
+
+  it('leaves rules without client-side options out of the matcher', async () => {
+    const contents = await getRouteRulesTemplate(true, undefined, { '/headers/**': { headers: { 'x-test': '1' } }, '/__nuxt_error': { cache: false } })
+    expect(contents).toBe(await getRouteRulesTemplate(true, undefined, {}))
+  })
+
   it('matches base-relative paths when app.baseURL is set', async () => {
     const contents = await getRouteRulesTemplate(false, '/sub/')
     const code = contents.replace(/^import \{ defu \} from .*$/m, '').replace('export default', 'return')
