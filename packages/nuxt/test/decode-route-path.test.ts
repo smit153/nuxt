@@ -1,8 +1,8 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { decodeRoutePath } from '../src/core/utils/index.ts'
-import { assertCaseIndependentRouteRuleKey, createNormalizedRouteRulesRouter, findCaseDependentConstraint, foldRouteRulePath, foldRouteRulePattern, normalizeRouteRuleKey, normalizeRouteRuleLookupPath, normalizeRouteRulePath } from '../src/core/utils/route-rules.ts'
+import { decodeRoutePath, foldRouteCase, foldRouteRulePath } from '../src/core/utils/index.ts'
+import { assertCaseIndependentRouteRuleKey, createNormalizedRouteRulesRouter, findCaseDependentConstraint, foldRouteRulePattern, normalizeRouteRuleKey, normalizeRouteRuleLookupPath, normalizeRouteRulePath } from '../src/core/utils/route-rules.ts'
 
 const RESERVED_RE = /[%;/?:@&=+$,#]/g
 
@@ -61,9 +61,9 @@ describe('decodeRoutePath', () => {
 })
 
 describe('normalizeRouteRulePath', () => {
-  it('should fold by lowercasing the unfolded key', () => {
+  it('should fold the unfolded key', () => {
     fc.assert(fc.property(routePath, (path) => {
-      expect(normalizeRouteRulePath(path, true)).toBe(normalizeRouteRulePath(path, false).toLowerCase())
+      expect(normalizeRouteRulePath(path, true)).toBe(foldRouteCase(normalizeRouteRulePath(path, false)))
     }), { numRuns: 1000 })
   })
 
@@ -74,6 +74,17 @@ describe('normalizeRouteRulePath', () => {
       const encoded = '/' + segments.map(segment => encodeURIComponent(segment)).join('/')
       expect(normalizeRouteRulePath(encoded, fold)).toBe(normalizeRouteRulePath(decoded, fold))
     }), { numRuns: 1000 })
+  })
+})
+
+describe('foldRouteCase', () => {
+  it('folds two characters together exactly when a case-insensitive vue-router route matches one with the other', () => {
+    const chars = [...'aAzZéÉßſİiKkςσΣµμΜϐβᲂоОᲃсС𐐀𐐨']
+    for (const a of chars) {
+      for (const b of chars) {
+        expect(foldRouteCase(a) === foldRouteCase(b), `${a} ${b}`).toBe(new RegExp(`^${a}$`, 'i').test(b))
+      }
+    }
   })
 })
 

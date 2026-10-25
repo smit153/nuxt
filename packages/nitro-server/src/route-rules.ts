@@ -2,7 +2,8 @@ import { pathToFileURL } from 'node:url'
 import { bundlerDiagnostics } from '@nuxt/kit/internal'
 import { resolveModulePath } from 'exsolve'
 import type { Nitro, NitroConfig } from 'nitro/types'
-import { assertCaseIndependentRouteRuleKey, foldRouteRulePath, foldRouteRulePattern } from '../../nuxt/src/core/utils/route-rules.ts'
+import { foldRouteCase, foldRouteRulePath } from '../../nuxt/src/core/utils/index.ts'
+import { assertCaseIndependentRouteRuleKey, foldRouteRulePattern } from '../../nuxt/src/core/utils/route-rules.ts'
 
 /**
  * Rewrites `redirect.statusCode` to `redirect.status`, warning once per route.
@@ -76,6 +77,7 @@ export function routeRulesCaseFoldPlugin (getNitro: () => Nitro) {
           code.replace(FIND_ROUTE_RULES_EXPORT, 'const findSensitiveRouteRules = '),
           compileHandlersImport(rules, options),
           `const findFoldedRouteRules = ${compileFindRouteRules(rules, options)}`,
+          `const foldRouteCase = ${foldRouteCase.toString()}`,
           `const foldRouteRulePath = ${foldRouteRulePath.toString()}`,
           `export const findRouteRules = (method, path) => {`,
           `  const sensitive = findSensitiveRouteRules(method, path)`,

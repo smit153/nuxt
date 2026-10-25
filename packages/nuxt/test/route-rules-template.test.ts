@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { join, normalize } from 'pathe'
 import { withoutTrailingSlash } from 'ufo'
 import { describe, expect, it } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Nuxt } from '@nuxt/schema'
 import { loadNuxt } from '../src/index.ts'
 import { routeRulesTemplate } from '../src/core/templates.ts'
@@ -99,6 +100,21 @@ describe('route rules template', () => {
     expect(matcher('/x/123')).not.toHaveProperty('appMiddleware')
     expect(matcher('/range/ABC').appMiddleware).toEqual({ auth: true })
     expect(matcher('/RANGE/_').appMiddleware).toEqual({ auth: true })
+  })
+
+  it('applies `appMiddleware` to every path a case-insensitive page route matches', async () => {
+    const contents = await getRouteRulesTemplate(false, undefined, {
+      '/σίγμα': { appMiddleware: 'auth' },
+      '/контакты': { appMiddleware: 'auth' },
+    })
+    const { defu } = await import('defu')
+    const matcher = new Function('defu', contents.replace(/^import \{ defu \} from .*$/m, '').replace('export default', 'return'))(defu) as (path: string) => Record<string, any>
+    const router = createRouter({ history: createMemoryHistory(), routes: ['/σίγμα', '/контакты'].map(path => ({ path, component: {} })), sensitive: false })
+    for (const path of ['/ςίγμα', '/ΣΊΓΜΑ', '/кᲂнᲄакᲅы', '/КОНТАКТЫ']) {
+      const to = router.resolve(path)
+      expect(to.matched, path).toHaveLength(1)
+      expect(matcher(to.path).appMiddleware, path).toEqual({ auth: true })
+    }
   })
 
   it('rejects regex constraints that depend on letter case', async () => {

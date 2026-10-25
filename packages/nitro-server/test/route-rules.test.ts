@@ -86,6 +86,8 @@ describe('routeRulesCaseFoldPlugin', () => {
       '/admin/**': { headers: { 'x-admin': '1' } },
       '/Docs': { headers: { 'x-docs': '1' } },
       '/école': { headers: { 'x-ecole': '1' } },
+      '/σίγμα/**': { headers: { 'x-sigma': '1' } },
+      '/контакты': { headers: { 'x-contacts': '1' } },
       '/n/:id(\\D+)': { headers: { 'x-n': '1' } },
       'POST /Form': { headers: { 'x-form': '1' } },
     })
@@ -99,6 +101,10 @@ describe('routeRulesCaseFoldPlugin', () => {
     for (const path of ['/%C3%A9cole', '/%C3%89cole', '/%c3%89COLE']) {
       expect(match(path).headers, path).toEqual({ 'x-ecole': '1' })
     }
+    for (const path of ['/ςίγμα/a', encodeURI('/ΣΊΓΜΑ/a'), encodeURI('/ςίγμα/a')]) {
+      expect(match(path).headers, path).toEqual({ 'x-sigma': '1' })
+    }
+    expect(match(encodeURI('/кᲂнтакты')).headers).toEqual({ 'x-contacts': '1' })
     expect(match('/N/abc').headers).toEqual({ 'x-n': '1' })
     expect(match('/N/123').headers).toBeUndefined()
     expect(match('/form', 'POST').headers).toEqual({ 'x-form': '1' })

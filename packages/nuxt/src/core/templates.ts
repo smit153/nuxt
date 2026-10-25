@@ -14,7 +14,7 @@ import { bundlerDiagnostics, useServerBuild } from '@nuxt/kit/internal'
 import { annotatePlugins, checkForCircularDependencies, filterPluginDependencies, hasIslandOptOutPlugins, hasParallelPlugins, hasPluginDependencies, hasPluginHooks, sortPluginsByDependsOn } from './app.ts'
 import { setPluginDependenciesForMode } from './plugins/plugin-metadata.ts'
 import { EXTENSION_RE } from './utils/index.ts'
-import { assertCaseIndependentRouteRuleKey, createNormalizedRouteRulesRouter, normalizePathCode, resolveRouteRulesRoutes } from './utils/route-rules.ts'
+import { assertCaseIndependentRouteRuleKey, createNormalizedRouteRulesRouter, genNormalizePathCode, resolveRouteRulesRoutes } from './utils/route-rules.ts'
 import type { RouteRulesRouter } from './utils/route-rules.ts'
 import type { Nuxt, NuxtApp, NuxtOptions, NuxtTemplate } from 'nuxt/schema'
 import type { Nitro } from 'nitro/types'
@@ -861,8 +861,8 @@ export const routeRulesTemplate: NuxtTemplate = {
     return [
       `import { defu } from ${JSON.stringify(defuPath)}`,
       `const matcher = ${router.compileToString(compileOptions)}`,
-      normalizePathCode,
-      `export default path => defu({}, ...matcher('', normalizePath(path, ${fold})).map(r => r.data).reverse())`,
+      genNormalizePathCode(fold),
+      `export default path => defu({}, ...matcher('', normalizePath(path)).map(r => r.data).reverse())`,
     ].join('\n')
   },
 }

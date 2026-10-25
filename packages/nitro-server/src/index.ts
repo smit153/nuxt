@@ -32,7 +32,7 @@ import { compileRouterToString } from 'rou3/compiler'
 // TODO: figure out a good way to share this
 import { createImportProtectionPatterns } from '../../nuxt/src/core/plugins/import-protection.ts'
 import { createNormalizedRouteRulesRouter, mergeMethodRouteRulesRoutes, normalizeAppMiddlewareRules, normalizeRouteRuleLookupPath } from '../../nuxt/src/core/utils/route-rules.ts'
-import { encodeRoutePath } from '../../nuxt/src/core/utils/index.ts'
+import { encodeRoutePath, foldRouteCase } from '../../nuxt/src/core/utils/index.ts'
 import { nitroSchemaTemplate } from './templates.ts'
 import { createServerAutoImports, resolveNestedServerUtilsDirs, resolveServerImportDirs } from './auto-imports.ts'
 import { normalizeLegacyRouteRules, routeRulesCaseFoldPlugin } from './route-rules.ts'
@@ -1263,7 +1263,7 @@ function compilePageMatcher (patterns: string[]): string {
     addRou3Route(router, '', pattern, 1)
   }
   // lookups are decoded, while rou3 matches the encoded form of the patterns
-  return `/* @__PURE__ */ (() => {const encodeRoutePath = ${encodeRoutePath.toString()};const match = ${compileRouterToString(router)};return (method, path) => match(method, encodeRoutePath(path))})()`
+  return `/* @__PURE__ */ (() => {const encodeRoutePath = ${encodeRoutePath.toString()};const foldRouteCase = ${foldRouteCase.toString()};const match = ${compileRouterToString(router)};return (method, path) => match(method, encodeRoutePath(foldRouteCase(path)))})()`
 }
 
 const ROU3_PARAM_KEY_RE = /^:_\d+$/

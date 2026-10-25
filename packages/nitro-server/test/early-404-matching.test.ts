@@ -9,7 +9,7 @@ import type { NuxtPage } from 'nuxt/schema'
 
 import { collectRou3PagePatterns } from '../../nuxt/src/pages/utils.ts'
 import { normalizeRouteRulePath } from '../../nuxt/src/core/utils/route-rules.ts'
-import { encodeRoutePath } from '../../nuxt/src/core/utils/index.ts'
+import { encodeRoutePath, foldRouteCase } from '../../nuxt/src/core/utils/index.ts'
 import { throwIfUnmatchedPagePath } from '../../nuxt/src/runtime/server/renderer/early-404.ts'
 import type { NuxtRendererOptions } from '../../nuxt/src/runtime/server/renderer/runtime.ts'
 
@@ -32,7 +32,7 @@ vi.mock('nuxt/internal/renderer-config', () => ({
 const Stub = defineComponent({ render: () => h('div') })
 
 const pathSegment = fc.constantFrom(
-  'about', 'Products', 'deep', '测试', 'a.b', 'café', 'CAFÉ', '100% legit', 'a+b', '%2Fa', 'İstanbul',
+  'about', 'Products', 'deep', '测试', 'a.b', 'café', 'CAFÉ', '100% legit', 'a+b', '%2Fa', 'İstanbul', 'σίγμα', 'контакты',
   ':id()', ':id?', ':slug(.*)*', ':id(\\d+)', ':a()-:b()',
 )
 
@@ -84,6 +84,7 @@ function candidateUrls (fullPath: string): string[] {
     withoutOptionalParams,
     filled.toUpperCase(),
     filled.toLowerCase(),
+    filled.replace(/σ/g, 'ς').replace(/о/g, 'ᲂ'),
     encodeURI(filled),
     filled + '/',
     filled + '/_payload.json',
@@ -96,7 +97,7 @@ function compileMatcher (patterns: string[]) {
     addRoute(router, '', pattern, 1)
   }
   const match = new Function(`${compileRouterToString(router, { functionName: 'NUXT_PAGE_MATCHER' })}\nreturn NUXT_PAGE_MATCHER`)() as (method: string, path: string) => unknown
-  return (method: string, path: string) => match(method, encodeRoutePath(path))
+  return (method: string, path: string) => match(method, encodeRoutePath(foldRouteCase(path)))
 }
 
 function isEarly404 (url: string) {

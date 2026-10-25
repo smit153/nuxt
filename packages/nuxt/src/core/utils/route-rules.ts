@@ -5,7 +5,7 @@ import { defu } from 'defu'
 import { tryUseNitro } from '@nuxt/kit'
 import { pageDiagnostics } from '@nuxt/kit/internal'
 import type { Nuxt, RouteRuleConfig } from '@nuxt/schema'
-import { decodeRoutePath, encodeRoutePath } from './index.ts'
+import { decodeRoutePath, encodeRoutePath, foldRouteCase, foldRouteRulePath } from './index.ts'
 
 /** One entry of a route-rules router: the pattern it matches and the rules it resolves to. */
 export interface RouteRulesRoute {
@@ -88,7 +88,7 @@ export function mergeMethodRouteRulesRoutes (routes: RouteRulesRoute[], method =
  */
 export function normalizeRouteRulePath (path: string, fold: boolean): string {
   const decoded = decodeRoutePath(path)
-  return fold ? decoded.toLowerCase() : decoded
+  return fold ? foldRouteCase(decoded) : decoded
 }
 
 /**
@@ -141,28 +141,7 @@ export function encodeRoutePattern (pattern: string): string {
 }
 
 /**
- * Lower-case a request path for case-insensitive route rule matching. Percent-encoded
- * characters are folded too, so `/%C3%89cole` folds to `/%C3%A9cole`.
- *
- * Inlined by source into the server bundle, so it must not reference anything outside itself.
- *
- * @internal
- */
-export function foldRouteRulePath (path: string): string {
-  return path.replace(/(?:%[\da-f]{2})+|[^%]+/gi, (run) => {
-    if (run[0] !== '%') { return run.toLowerCase() }
-    try {
-      const decoded = decodeURIComponent(run)
-      const folded = decoded.toLowerCase()
-      return folded === decoded ? run : encodeURIComponent(folded)
-    } catch {
-      return run
-    }
-  })
-}
-
-/**
- * Lower-case a route rule pattern as {@link foldRouteRulePath} does a request path, keeping
+ * Case-fold a route rule pattern as {@link foldRouteRulePath} does a request path, keeping
  * param names, backslash escapes and regex constraints as written.
  *
  * @internal
@@ -181,13 +160,13 @@ const CONSTRAINT_ATOM_RE = /(?:%[\da-f]{2})+|\\(?:x[\da-f]{2}|u[\da-f]{4}|u\{[\d
 
 let casePairs: Array<[upper: string, lower: string]> | undefined
 
-function getCasePairs (): Array<[upper: string, lower: string]> {
+function getCasePairs (): Array<[char: string, folded: string]> {
   if (!casePairs) {
     casePairs = []
     for (let code = 0; code <= 0xFFFF; code++) {
       const char = String.fromCharCode(code)
-      const lower = char.toLowerCase()
-      if (lower !== char && lower.length === 1 && (code < 0x80 || lower.charCodeAt(0) >= 0x80)) { casePairs.push([char, lower]) }
+      const folded = foldRouteCase(char)
+      if (folded !== char) { casePairs.push([char, folded]) }
     }
   }
   return casePairs
@@ -207,11 +186,11 @@ export function findCaseDependentConstraint (constraint: string): string | undef
   for (const [atom] of constraint.matchAll(CONSTRAINT_ATOM_RE)) {
     if (atom[0] === '%') {
       const decoded = decodeRoutePath(atom)
-      if (decoded.toLowerCase() !== decoded) { return atom }
+      if (foldRouteCase(decoded) !== decoded) { return atom }
       continue
     }
     if (atom.length === 1) {
-      if (atom.toLowerCase() !== atom) { return atom }
+      if (foldRouteCase(atom) !== atom) { return atom }
       continue
     }
     let regex: RegExp
@@ -221,7 +200,7 @@ export function findCaseDependentConstraint (constraint: string): string | undef
       continue
     }
     const negated = atom.startsWith('[^')
-    if (getCasePairs().some(([upper, lower]) => negated ? regex.test(upper) !== regex.test(lower) : regex.test(upper) && !regex.test(lower))) { return atom }
+    if (getCasePairs().some(([char, folded]) => negated ? regex.test(char) !== regex.test(folded) : regex.test(char) && !regex.test(folded))) { return atom }
   }
 }
 
@@ -374,21 +353,23 @@ export function createRouteRulesRouter (allRoutes: RouteRulesRoute[], baseURL: s
 }
 
 /**
- * Source of the `normalizePath` helper a compiled matcher looks rules up through: `decodeRoutePath`
- * is inlined by source so that the runtime lookup and the build-time key normalisation cannot
- * drift apart.
+ * Source of the `normalizePath` helper a compiled matcher looks rules up through, case-folding
+ * when `fold` is set: `decodeRoutePath` and `foldRouteCase` are inlined by source so that the
+ * runtime lookup and the build-time key normalisation cannot drift apart.
  *
  * @internal
  */
-export const normalizePathCode: string = [
-  `const decodeRoutePath = ${decodeRoutePath.toString()}`,
-  `const encodeRoutePath = ${encodeRoutePath.toString()}`,
-  `const normalizePath = (path, fold) => {`,
-  `  if (typeof path !== 'string') { return path }`,
-  `  const decoded = decodeRoutePath(path)`,
-  `  return encodeRoutePath(fold ? decoded.toLowerCase() : decoded)`,
-  `}`,
-].join('\n')
+export function genNormalizePathCode (fold: boolean): string {
+  return [
+    `const decodeRoutePath = ${decodeRoutePath.toString()}`,
+    `const encodeRoutePath = ${encodeRoutePath.toString()}`,
+    fold ? `const foldRouteCase = ${foldRouteCase.toString()}` : ``,
+    `const normalizePath = (path) => {`,
+    `  if (typeof path !== 'string') { return path }`,
+    `  return encodeRoutePath(${fold ? 'foldRouteCase(decodeRoutePath(path))' : 'decodeRoutePath(path)'})`,
+    `}`,
+  ].filter(Boolean).join('\n')
+}
 
 /**
  * Build a route-rules router whose keys are normalised with {@link normalizeRouteRuleKey},
