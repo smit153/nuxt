@@ -9,12 +9,12 @@ import { hash } from 'ohash'
 import { camelCase } from 'scule'
 import { filename, reverseResolveAlias } from 'pathe/utils'
 import { tryUseNitro } from '@nuxt/kit'
-import { bundlerDiagnostics, pageDiagnostics, useServerBuild } from '@nuxt/kit/internal'
+import { bundlerDiagnostics, useServerBuild } from '@nuxt/kit/internal'
 
 import { annotatePlugins, checkForCircularDependencies, filterPluginDependencies, hasIslandOptOutPlugins, hasParallelPlugins, hasPluginDependencies, hasPluginHooks, sortPluginsByDependsOn } from './app.ts'
 import { setPluginDependenciesForMode } from './plugins/plugin-metadata.ts'
 import { EXTENSION_RE } from './utils/index.ts'
-import { createNormalizedRouteRulesRouter, findCaseDependentRouteRuleKeyPart, normalizePathCode, resolveRouteRulesRoutes } from './utils/route-rules.ts'
+import { assertCaseIndependentRouteRuleKey, createNormalizedRouteRulesRouter, normalizePathCode, resolveRouteRulesRoutes } from './utils/route-rules.ts'
 import type { RouteRulesRouter } from './utils/route-rules.ts'
 import type { Nuxt, NuxtApp, NuxtOptions, NuxtTemplate } from 'nuxt/schema'
 import type { Nitro } from 'nitro/types'
@@ -817,22 +817,13 @@ export const routeRulesTemplate: NuxtTemplate = {
     if (!routes.length) {
       return `export default () => ({})`
     }
-    // rou3 matches keys case-sensitively, but vue-router matches routes case-insensitively
-    // unless `sensitive`, so an insensitive-routing rule keyed `/Admin` would never match a
-    // folded lookup and silently lose its protections. `sensitive` can also come from
-    // `app/router.options.ts` (runtime-only), so emit both a decoded and a decoded+folded
-    // matcher and pick at runtime.
-    const caseSensitiveRouteRules = !!nuxt.options.router.options.sensitive
-    const caseDependent = routes
-      .map(({ route }) => ({ route, part: findCaseDependentRouteRuleKeyPart(route) }))
-      .find((entry): entry is { route: string, part: string } => entry.part !== undefined)
-    if (caseDependent && !caseSensitiveRouteRules) {
-      throw pageDiagnostics.NUXT_B4022(caseDependent)
+    const fold = !nuxt.options.router.options.sensitive
+    if (fold) {
+      for (const { route } of routes) { assertCaseIndependentRouteRuleKey(route) }
     }
     const warned = warnedKeyCollisions.get(nuxt) ?? warnedKeyCollisions.set(nuxt, new Set()).get(nuxt)!
-    const getNormalizedRouter = (fold: boolean) => createNormalizedRouteRulesRouter(routes, '', fold, (existing, route, key) => {
-      // Only the matcher that will actually be used at runtime should report collisions.
-      if (fold === caseSensitiveRouteRules || warned.has(key)) { return }
+    const router = createNormalizedRouteRulesRouter(routes, '', fold, (existing, route, key) => {
+      if (warned.has(key)) { return }
       warned.add(key)
       bundlerDiagnostics.NUXT_B7022({ existing, route, canFold: fold })
     })
@@ -867,25 +858,11 @@ export const routeRulesTemplate: NuxtTemplate = {
         }}`
       },
     }
-    const sensitiveMatcher = getNormalizedRouter(false).compileToString(compileOptions)
-    const foldedMatcher = getNormalizedRouter(true).compileToString(compileOptions)
-    const needsRouterOptions = foldedMatcher !== sensitiveMatcher || caseSensitiveRouteRules
     return [
       `import { defu } from ${JSON.stringify(defuPath)}`,
-      needsRouterOptions ? `import routerOptions from '#build/router.options.mjs'` : ``,
-      caseDependent ? `if (!routerOptions.sensitive) { throw new Error(${JSON.stringify(`[nuxt] The route rule \`${caseDependent.route}\` has a regex constraint that depends on letter case (\`${caseDependent.part}\`), so it cannot be matched with \`router.options.sensitive: false\`. Write the constraint for lower-case letters, such as \`[a-z]\` instead of \`[A-Z]\`.`)}) }` : ``,
-      needsRouterOptions ? `const sensitiveMatcher = ${sensitiveMatcher}` : ``,
-      needsRouterOptions
-        ? (foldedMatcher === sensitiveMatcher ? `const foldedMatcher = sensitiveMatcher` : `const foldedMatcher = ${foldedMatcher}`)
-        : `const foldedMatcher = ${foldedMatcher}`,
+      `const matcher = ${router.compileToString(compileOptions)}`,
       normalizePathCode,
-      needsRouterOptions
-        ? [
-            `export default (path) => routerOptions.sensitive`,
-            `  ? defu({}, ...sensitiveMatcher('', normalizePath(path, false)).map(r => r.data).reverse())`,
-            `  : defu({}, ...foldedMatcher('', normalizePath(path, true)).map(r => r.data).reverse())`,
-          ].join('\n')
-        : `export default path => defu({}, ...foldedMatcher('', normalizePath(path, true)).map(r => r.data).reverse())`,
-    ].filter(Boolean).join('\n')
+      `export default path => defu({}, ...matcher('', normalizePath(path, ${fold})).map(r => r.data).reverse())`,
+    ].join('\n')
   },
 }

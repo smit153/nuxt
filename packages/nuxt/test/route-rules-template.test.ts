@@ -1,5 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { normalize } from 'pathe'
+import { join, normalize } from 'pathe'
 import { withoutTrailingSlash } from 'ufo'
 import { describe, expect, it } from 'vitest'
 import type { Nuxt } from '@nuxt/schema'
@@ -27,16 +29,15 @@ async function getRouteRulesTemplate (sensitive: boolean, baseURL?: string, rout
 }
 
 describe('route rules template', () => {
-  it('does not import router options when case-insensitive matching is unconditional', async () => {
-    const contents = await getRouteRulesTemplate(false)
-    expect(contents).not.toContain('router.options.mjs')
-    expect(contents).toContain('normalizePath(path, true)')
-  })
-
-  it('picks the matcher at runtime when route rules are case sensitive', async () => {
-    const contents = await getRouteRulesTemplate(true)
-    expect(contents).toContain('router.options.mjs')
-    expect(contents).toContain('routerOptions.sensitive')
+  it('matches with the build-time `sensitive` setting', async () => {
+    const { defu } = await import('defu')
+    for (const sensitive of [true, false]) {
+      const contents = await getRouteRulesTemplate(sensitive)
+      expect(contents).not.toContain('router.options.mjs')
+      const matcher = new Function('defu', contents.replace(/^import \{ defu \} from .*$/m, '').replace('export default', 'return'))(defu) as (path: string) => Record<string, any>
+      expect(matcher('/protected/secret')).toMatchObject({ redirect: '/login' })
+      expect(matcher('/Protected/secret').redirect).toBe(sensitive ? undefined : '/login')
+    }
   })
 
   it('matches base-relative paths when app.baseURL is set', async () => {
@@ -72,7 +73,6 @@ describe('route rules template', () => {
     })
     const code = contents
       .replace(/^import \{ defu \} from .*$/m, '')
-      .replace(/^import routerOptions from .*$/m, 'const routerOptions = {}')
       .replace('export default', 'return')
     const { defu } = await import('defu')
     const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
@@ -89,7 +89,6 @@ describe('route rules template', () => {
     })
     const code = contents
       .replace(/^import \{ defu \} from .*$/m, '')
-      .replace(/^import routerOptions from .*$/m, 'const routerOptions = {}')
       .replace('export default', 'return')
     const { defu } = await import('defu')
     const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
@@ -108,22 +107,6 @@ describe('route rules template', () => {
     await expect(getRouteRulesTemplate(false, undefined, { '/accent/:id([é]+)': { appMiddleware: 'auth' } })).resolves.toBeTypeOf('string')
   })
 
-  it('throws at runtime when router options disable `sensitive` and a constraint depends on letter case', async () => {
-    const { defu } = await import('defu')
-    const load = (contents: string, sensitive: boolean) => new Function('defu', contents
-      .replace(/^import \{ defu \} from .*$/m, '')
-      .replace(/^import routerOptions from .*$/m, `const routerOptions = { sensitive: ${sensitive} }`)
-      .replace('export default', 'return'))(defu) as (path: string) => Record<string, any>
-
-    const caseDependent = await getRouteRulesTemplate(true, undefined, { '/upper/:id([A-Z]+)': { appMiddleware: 'auth' } })
-    expect(() => load(caseDependent, false)).toThrow('`/upper/:id([A-Z]+)` has a regex constraint that depends on letter case (`[A-Z]`)')
-    expect(load(caseDependent, true)('/upper/ABC').appMiddleware).toEqual({ auth: true })
-
-    const caseIndependent = await getRouteRulesTemplate(true, undefined, { '/upper/:id([a-z]+)': { appMiddleware: 'auth' } })
-    expect(caseIndependent).not.toContain('throw new Error')
-    expect(load(caseIndependent, false)('/Upper/ABC').appMiddleware).toEqual({ auth: true })
-  })
-
   it('applies `appMiddleware` from rules with unencoded regex constraints read from the config', async () => {
     const nuxt = {
       options: {
@@ -135,7 +118,6 @@ describe('route rules template', () => {
     const contents = await routeRulesTemplate.getContents!({ nuxt, app: undefined!, options: routeRulesTemplate.options! })
     const code = contents
       .replace(/^import \{ defu \} from .*$/m, '')
-      .replace(/^import routerOptions from .*$/m, 'const routerOptions = {}')
       .replace('export default', 'return')
     const { defu } = await import('defu')
     const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
@@ -166,5 +148,37 @@ describe('route rule redirects', () => {
     } finally {
       await nuxt.close()
     }
+  })
+})
+
+describe('router options template', () => {
+  async function getRouterOptionsTemplate (code: string) {
+    const dir = await mkdtemp(join(tmpdir(), 'nuxt-router-options-'))
+    const file = join(dir, 'router.options.ts')
+    await writeFile(file, code)
+    const nuxt = await loadNuxt({
+      cwd: pagesFixtureDir,
+      ready: true,
+      overrides: {
+        router: { options: { sensitive: true } },
+        hooks: { 'pages:routerOptions' ({ files }) { files.push({ path: file }) } },
+      },
+    })
+    try {
+      const template = nuxt.options.build.templates.find(t => t.filename === 'router.options.mjs')!
+      return await template.getContents!({ nuxt, app: undefined!, options: template.options })
+    } finally {
+      await nuxt.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('rejects router options files that set `sensitive`', async () => {
+    await expect(getRouterOptionsTemplate('export default { sensitive: false }')).rejects.toThrow('sets `sensitive`')
+  })
+
+  it('uses `sensitive` from the config', async () => {
+    const contents = await getRouterOptionsTemplate('const options = { sensitive: false }\nexport default options')
+    expect(contents.trim().split('\n').slice(-2)).toEqual(['sensitive: true,', '}'])
   })
 })

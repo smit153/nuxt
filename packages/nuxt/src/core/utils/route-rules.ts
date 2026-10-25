@@ -225,13 +225,7 @@ export function findCaseDependentConstraint (constraint: string): string | undef
   }
 }
 
-/**
- * The first part of a regex constraint in a route-rule key that depends on letter case (see
- * {@link findCaseDependentConstraint}).
- *
- * @internal
- */
-export function findCaseDependentRouteRuleKeyPart (key: string): string | undefined {
+function findCaseDependentRouteRuleKeyPart (key: string): string | undefined {
   for (const { text, constraint } of splitRouteConstraints(key)) {
     const part = constraint ? findCaseDependentConstraint(text) : undefined
     if (part !== undefined) { return part }
