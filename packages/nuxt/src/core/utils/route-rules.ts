@@ -155,10 +155,60 @@ export function foldRouteRulePattern (pattern: string): string {
     .join('')
 }
 
-const PERCENT_ESCAPE_RE = /%[\da-f]{2}/gi
-const CONSTRAINT_ATOM_RE = /(?:%[\da-f]{2})+|\\(?:x[\da-f]{2}|u[\da-f]{4}|u\{[\da-f]+\}|c[a-z]|[0-7]{1,3}|[\s\S])|\[(?:\\[\s\S]|[^\]\\])*\]|[\s\S]/gi
+const CONSTRAINT_ATOM_RE = /\\(?:x[\da-f]{2}|u[\da-f]{4}|u\{[\da-f]+\}|c[a-z]|[0-7]{1,3}|[\s\S])|\[(?:\\[\s\S]|[^\]\\])*\]|\{\d+(?:,\d*)?\}|\(\?(?:<?[=!]|<[^>]*>|:)|[\s\S]/gi
+const CONSTRAINT_SYNTAX = new Set('()|*+?^$')
 
-let casePairs: Array<[upper: string, lower: string]> | undefined
+let encodedChars: string[] | undefined
+
+function getEncodedChars (): string[] {
+  if (!encodedChars) {
+    encodedChars = ['%']
+    for (let code = 0; code <= 0xFFFF; code++) {
+      const char = String.fromCharCode(code)
+      if (encodeRoutePath(char) !== char) { encodedChars.push(char) }
+    }
+  }
+  return encodedChars
+}
+
+/**
+ * The first part of a regex constraint that can match `%` or a character that is percent-encoded
+ * in a lookup path, such as `é`, `.`, `\s` or `[^a-z]`. Constraints are matched against the
+ * encoded path, so such a constraint would not match the way it reads.
+ *
+ * @internal
+ */
+export function findEncodingDependentConstraint (constraint: string): string | undefined {
+  for (const [atom] of constraint.matchAll(CONSTRAINT_ATOM_RE)) {
+    if (atom.length === 1 && atom !== '.') {
+      if (!CONSTRAINT_SYNTAX.has(atom) && (atom === '%' || encodeRoutePath(atom) !== atom)) { return atom }
+      continue
+    }
+    let regex: RegExp
+    try {
+      regex = new RegExp(atom)
+    } catch {
+      continue
+    }
+    if (getEncodedChars().some(char => regex.test(char))) { return atom }
+  }
+}
+
+/**
+ * Throw if a regex constraint in a route-rule key can match a percent-encoded character.
+ *
+ * @internal
+ */
+export function assertEncodingIndependentRouteRuleKey (key: string): void {
+  for (const { text, constraint } of splitRouteConstraints(key)) {
+    const part = constraint ? findEncodingDependentConstraint(text) : undefined
+    if (part !== undefined) {
+      throw pageDiagnostics.NUXT_B4024({ route: decodeRoutePath(key), part: decodeRoutePath(part) })
+    }
+  }
+}
+
+let casePairs: Array<[char: string, folded: string]> | undefined
 
 function getCasePairs (): Array<[char: string, folded: string]> {
   if (!casePairs) {
@@ -174,28 +224,21 @@ function getCasePairs (): Array<[char: string, folded: string]> {
 
 /**
  * The first part of a regex constraint that matches an upper-case letter but not its lower-case
- * form, such as `A`, `[A-Z]`, `\x41` or `%C3%89`, or a negated class that matches one form but
- * not the other, such as `[^A-Z]`. Request paths are lower-cased before they are matched when
- * routing is case-insensitive, so such a constraint would not match the way it reads. The hex
- * digits of a percent-escape in a class only match the upper-case hex digits of an encoded
- * path, so they are not checked.
+ * form, such as `A`, `[A-Z]` or `\x41`, or a negated class that matches one form but not the
+ * other, such as `[^A-Z]`. Request paths are lower-cased before they are matched when routing
+ * is case-insensitive, so such a constraint would not match the way it reads.
  *
  * @internal
  */
 export function findCaseDependentConstraint (constraint: string): string | undefined {
   for (const [atom] of constraint.matchAll(CONSTRAINT_ATOM_RE)) {
-    if (atom[0] === '%') {
-      const decoded = decodeRoutePath(atom)
-      if (foldRouteCase(decoded) !== decoded) { return atom }
-      continue
-    }
     if (atom.length === 1) {
       if (foldRouteCase(atom) !== atom) { return atom }
       continue
     }
     let regex: RegExp
     try {
-      regex = new RegExp(atom[0] === '[' ? atom.replace(PERCENT_ESCAPE_RE, '%') : atom)
+      regex = new RegExp(atom)
     } catch {
       continue
     }
@@ -226,16 +269,16 @@ export function assertCaseIndependentRouteRuleKey (key: string): void {
 
 /**
  * Normalise a route-rule key like {@link normalizeRouteRulePath}, except for its regex
- * constraints. rou3 tests a constraint against the encoded path segment, so constraints are
- * percent-encoded the way h3 encodes route-rule keys, with upper-case hex digits as in lookup
- * paths, and never decoded or folded.
+ * constraints, which are kept as written. rou3 tests a constraint against the encoded path
+ * segment, so a constraint must not match an encoded character (see
+ * {@link assertEncodingIndependentRouteRuleKey}).
  *
  * @internal
  */
 export function normalizeRouteRuleKey (key: string, fold: boolean): string {
   return splitRouteConstraints(key)
     .map((part) => {
-      return part.constraint ? encodeRoutePattern(part.text).replace(PERCENT_ESCAPE_RE, escape => escape.toUpperCase()) : normalizeRouteRulePath(part.text, fold)
+      return part.constraint ? part.text : normalizeRouteRulePath(part.text, fold)
     })
     .join('')
 }

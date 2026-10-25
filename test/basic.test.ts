@@ -292,8 +292,8 @@ describe('route rules', () => {
     expect(html).toContain('Hello from routeRules!')
   })
 
-  it('should run appMiddleware from a route rule with a unicode regex constraint', async () => {
-    expect(await $fetch<string>(`/route-rules/constrained/${encodeURIComponent('café')}`)).toContain('Hello from routeRules!')
+  it('should run appMiddleware from a route rule with a regex constraint', async () => {
+    expect(await $fetch<string>('/route-rules/constrained/tea')).toContain('Hello from routeRules!')
     expect(await $fetch<string>('/route-rules/constrained/other')).not.toContain('Hello from routeRules!')
   })
 

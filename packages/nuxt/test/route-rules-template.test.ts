@@ -94,19 +94,18 @@ describe('route rules template', () => {
 
   it('applies `appMiddleware` from rules with regex constraints', async () => {
     const contents = await getRouteRulesTemplate(false, undefined, {
-      '/blog/:slug(caf%C3%A9)': { appMiddleware: 'auth' },
-      '/unencoded/:slug(café)': { appMiddleware: 'auth' },
-      '/x/:id(\\D+)': { appMiddleware: 'admin' },
-      '/Range/:id([A-z]+)': { appMiddleware: 'auth' },
+      '/blog/:slug(cafe|tea)': { appMiddleware: 'auth' },
+      '/x/:id([a-z]+)': { appMiddleware: 'admin' },
+      '/Range/:id([A-Za-z_]+)': { appMiddleware: 'auth' },
     })
     const code = contents
       .replace(/^import \{ defu \} from .*$/m, '')
       .replace('export default', 'return')
     const { defu } = await import('defu')
     const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
-    expect(matcher('/blog/café').appMiddleware).toEqual({ auth: true })
-    expect(matcher('/Blog/caf%C3%A9').appMiddleware).toEqual({ auth: true })
-    expect(matcher('/unencoded/café').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/blog/cafe').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/Blog/tea').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/blog/caf%C3%A9')).not.toHaveProperty('appMiddleware')
     expect(matcher('/x/abc').appMiddleware).toEqual({ admin: true })
     expect(matcher('/x/123')).not.toHaveProperty('appMiddleware')
     expect(matcher('/range/ABC').appMiddleware).toEqual({ auth: true })
@@ -131,15 +130,21 @@ describe('route rules template', () => {
   it('rejects regex constraints that depend on letter case', async () => {
     await expect(getRouteRulesTemplate(false, undefined, { '/upper/:id([A-Z]+)': { appMiddleware: 'auth' } })).rejects.toThrow('depends on letter case (`[A-Z]`)')
     await expect(getRouteRulesTemplate(true, undefined, { '/upper/:id([A-Z]+)': { appMiddleware: 'auth' } })).resolves.toBeTypeOf('string')
-    await expect(getRouteRulesTemplate(false, undefined, { '/accent/:id([é]+)': { appMiddleware: 'auth' } })).resolves.toBeTypeOf('string')
   })
 
-  it('applies `appMiddleware` from rules with unencoded regex constraints read from the config', async () => {
+  it('rejects regex constraints that can match an encoded character', async () => {
+    for (const sensitive of [true, false]) {
+      await expect(getRouteRulesTemplate(sensitive, undefined, { '/accent/:id([é])': { appMiddleware: 'auth' } })).rejects.toThrow('can match a percent-encoded character (`[é]`)')
+      await expect(getRouteRulesTemplate(sensitive, undefined, { '/any/:id(.)': { headers: { 'x-test': '1' } } })).rejects.toThrow('can match a percent-encoded character (`.`)')
+    }
+  })
+
+  it('applies `appMiddleware` from rules with regex constraints read from the config', async () => {
     const nuxt = {
       options: {
         app: { baseURL: '/' },
         router: { options: {} },
-        routeRules: { '/blog/:slug(café)': { appMiddleware: 'auth' } },
+        routeRules: { '/blog/:slug(cafe)': { appMiddleware: 'auth' } },
       },
     } as unknown as Nuxt
     const contents = await routeRulesTemplate.getContents!({ nuxt, app: undefined!, options: routeRulesTemplate.options! })
@@ -148,8 +153,7 @@ describe('route rules template', () => {
       .replace('export default', 'return')
     const { defu } = await import('defu')
     const matcher = new Function('defu', code)(defu) as (path: string) => Record<string, any>
-    expect(matcher('/blog/café').appMiddleware).toEqual({ auth: true })
-    expect(matcher('/blog/caf%C3%A9').appMiddleware).toEqual({ auth: true })
+    expect(matcher('/blog/cafe').appMiddleware).toEqual({ auth: true })
   })
 })
 

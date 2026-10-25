@@ -126,5 +126,10 @@ export const pageDiagnostics = /* #__PURE__ */ defineDiagnostics({
       fix: 'Move `sensitive` to `router.options` in your `nuxt.config`.',
       docs: false,
     },
+    NUXT_B4024: {
+      why: (p: { route: string, part: string }) => `The route rule \`${p.route}\` has a regex constraint that can match a percent-encoded character (\`${p.part}\`), so it cannot be matched the way it reads.`,
+      fix: 'Route rules are matched against the percent-encoded path, so a constraint can only match characters that are not encoded, such as `[a-z0-9-]+`. To match any value, use a parameter without a constraint (such as `:slug`).',
+      docs: false,
+    },
   },
 })
